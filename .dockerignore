@@ -1,14 +1,16 @@
 # Build context exclusion for the Nagios container build (context = repo root).
 # Keeps the image build from shipping AI tooling, docs and test trees.
+#
+# Do NOT exclude contrib/, t/ or t-tap/: configure.ac lists contrib/Makefile,
+# t/Makefile and t-tap/Makefile in AC_CONFIG_FILES, so config.status aborts
+# with "cannot find input file" if their Makefile.in is missing from the
+# context, even though nothing in those trees is built or installed.
 .agents
 .github
 .project
 docs
-contrib
 debian
-t
 test
-t-tap
 tap
 monitoring-ui
 *.log

@@ -22,9 +22,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # that check_ping shells out to.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential autoconf automake libtool \
-        apache2 apache2-utils \
+        apache2 apache2-utils libapache2-mod-php \
         libssl-dev libgd-dev libpng-dev libjpeg62-turbo-dev libxml2-dev \
-        wget ca-certificates \
+        wget unzip ca-certificates \
         monitoring-plugins iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
@@ -37,6 +37,11 @@ RUN useradd --system --create-home --home-dir /usr/local/nagios nagios \
 
 WORKDIR /usr/src/nagios
 COPY . .
+
+# The source tree was committed from a filesystem without POSIX permission
+# bits, so the autotools scripts arrive non-executable. Restore what the build
+# needs rather than relying on the checkout's modes.
+RUN chmod +x configure config.guess config.sub install-sh
 
 # Configure against the downloaded source. Flags mirror a standard install.
 RUN ./configure \
@@ -51,6 +56,13 @@ RUN ./configure \
     && chown -R nagios:nagios /usr/local/nagios/var \
     && chmod 755 /usr/local/nagios/sbin
 
+# Nagios Core installs no check plugins: libexec is created empty and
+# resource.cfg points $USER1$ at it. Debian's monitoring-plugins package puts
+# the binaries in /usr/lib/nagios/plugins, so bridge the two rather than
+# hard-coding a Debian path into the portable configuration.
+RUN rm -rf /usr/local/nagios/libexec \
+    && ln -s /usr/lib/nagios/plugins /usr/local/nagios/libexec
+
 # Replace the installed sample configuration with the checked-in configuration.
 RUN rm -rf /usr/local/nagios/etc/objects \
     && mkdir -p /usr/local/nagios/etc/objects/generated
@@ -60,6 +72,7 @@ COPY monitoring/nagios/cgi.cfg /usr/local/nagios/etc/cgi.cfg
 COPY monitoring/nagios/objects/commands.cfg /usr/local/nagios/etc/objects/commands.cfg
 COPY monitoring/nagios/objects/contacts.cfg /usr/local/nagios/etc/objects/contacts.cfg
 COPY monitoring/nagios/objects/templates.cfg /usr/local/nagios/etc/objects/templates.cfg
+COPY monitoring/nagios/objects/bootstrap.cfg /usr/local/nagios/etc/objects/bootstrap.cfg
 COPY monitoring/nagios/objects/timeperiods.cfg /usr/local/nagios/etc/objects/timeperiods.cfg
 COPY monitoring/nagios/objects/generated/targets.cfg /usr/local/nagios/etc/objects/generated/targets.cfg
 # nagios.cfg references these; keep them present so a fresh volume mounts cleanly.
@@ -73,6 +86,11 @@ COPY monitoring/docker/apache-nagios.conf /etc/apache2/conf-available/nagios.con
 RUN a2enmod cgid \
     && a2enconf nagios
 
+# Unauthenticated liveness target, served from outside the Nagios document root
+# so it is not behind the Basic Auth that guards the CGIs and classic UI.
+# Platform health checks (Railway, k8s) point here.
+RUN mkdir -p /var/www/health && printf 'ok\n' > /var/www/health/healthz
+
 COPY monitoring/docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
@@ -84,7 +102,7 @@ RUN chmod +x /usr/local/nagios/bin/apply-generated.sh
 RUN apt-get purge -y --auto-remove \
         build-essential autoconf automake libtool \
         libssl-dev libgd-dev libpng-dev libjpeg62-turbo-dev libxml2-dev \
-        wget \
+        wget unzip \
     && apt-get autoremove -y \
     && rm -rf /usr/src/nagios /var/lib/apt/lists/*
 

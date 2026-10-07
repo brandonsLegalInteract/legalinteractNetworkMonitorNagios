@@ -1,0 +1,54 @@
+# Serves the monitoring interface and proxies Nagios CGIs same-origin.
+# The browser authenticates to Nagios with Basic Auth; this proxy does not
+# inject credentials and does not terminate TLS — put a real edge in front of
+# this service for anything beyond a lab (see monitoring/README.md).
+#
+# Rendered at container start by the nginx image's envsubst step
+# (/etc/nginx/templates/*.template -> /etc/nginx/conf.d/). Two variables:
+#   PORT                  the port to listen on (compose: 80, Railway: injected)
+#   NAGIOS_UPSTREAM       where the Nagios container lives
+#                         (compose: http://nagios:80,
+#                          Railway: http://<service>.railway.internal:8080)
+#   NGINX_LOCAL_RESOLVERS the host's nameservers, exported by the nginx image's
+#                         own 15-local-resolvers.envsh from /etc/resolv.conf
+# NGINX_ENVSUBST_FILTER in the Dockerfile restricts substitution to those three,
+# so nginx's own $host / $uri / $args survive untouched.
+
+server {
+    listen ${PORT};
+    listen [::]:${PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # The upstream is reached through a variable, not a literal host, so nginx
+    # resolves it per request instead of at startup. With a literal host nginx
+    # refuses to boot while Nagios is unresolvable ("host not found in
+    # upstream"), which on a platform means the UI crash-loops whenever the
+    # Nagios service is down or redeploying. A short TTL also picks up the new
+    # address when that service moves.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+    set $nagios ${NAGIOS_UPSTREAM};
+
+    # Nagios Core JSON CGIs (statusjson.cgi, objectjson.cgi, archivejson.cgi).
+    location /cgi-bin/ {
+        proxy_pass $nagios;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_buffering off;
+        proxy_read_timeout 30s;
+    }
+
+    # The classic Nagios HTML UI, for operators who still want it.
+    location /nagios/ {
+        proxy_pass $nagios;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # SPA fallback.
+    location / {
+        try_files $uri /index.html;
+    }
+}

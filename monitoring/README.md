@@ -94,6 +94,54 @@ targets are excluded from exports and shown as comments.
 
 ---
 
+## 2b. Deploy on Railway
+
+Railway's default builder (Railpack) cannot build this repository — it sees an
+autotools C source tree with no `start.sh` and gives up. The service must be
+switched to the **Dockerfile** builder. `railway.json` at the repository root
+already declares that, so a service pointed at the repo root picks it up:
+
+```json
+{ "build": { "builder": "DOCKERFILE",
+             "dockerfilePath": "monitoring/docker/Dockerfile.nagios" } }
+```
+
+Two services, mirroring the compose stack:
+
+| Service  | Root directory | Builder    | Public domain |
+| -------- | -------------- | ---------- | ------------- |
+| `nagios` | `/` (repo root)| Dockerfile | none — private only |
+| `ui`     | `/monitoring-ui` | Dockerfile | yes — this is the operator surface |
+
+### nagios service
+
+- Root directory `/`; the root `railway.json` selects the Dockerfile.
+- Variables: `NAGIOS_ADMIN_PASSWORD` — **required**. The entrypoint refuses to
+  start on Railway without it rather than exposing the default password to the
+  internet.
+- Do not generate a public domain. Enable the private network address only;
+  the UI reaches it at `nagios.railway.internal`.
+- Health check `/healthz` (unauthenticated; everything else needs Basic Auth).
+- Add a volume mounted at `/usr/local/nagios/var` so status, retention and
+  logs survive a redeploy. Without it every deploy restarts from zero history.
+
+### ui service
+
+- Root directory `/monitoring-ui`; `monitoring-ui/railway.json` selects its
+  Dockerfile.
+- Variables: `NAGIOS_UPSTREAM=http://nagios.railway.internal:8080` (match the
+  port Railway assigned the nagios service — read it from that service's
+  `PORT`). `PORT` is injected by Railway and consumed by the nginx template.
+- Generate a public domain. Operators sign in with `nagiosadmin` and
+  `NAGIOS_ADMIN_PASSWORD` when the browser is challenged on the first CGI call.
+
+### What is still not protected
+
+The SPA itself is served to anyone who reaches the public domain; only the
+Nagios CGIs behind it require credentials. See section 5.
+
+---
+
 ## 3. What's monitored
 
 Targets are one of three kinds, each mapping to a Nagios host + one service:
@@ -123,6 +171,7 @@ docker/Dockerfile.nagios                   builds Core 4.5.14 from this repo
 docker/entrypoint.sh                       validate → apache → nagios (PID 1)
 docker/apache-nagios.conf                  /cgi-bin/ and /nagios/ aliases
 docker-compose.yml                         nagios + ui stack
+../railway.json                            Railway: use the Dockerfile builder
 scripts/apply-generated.sh                 validate + reload on the Nagios host
 ../monitoring-ui/                          the interface (see its README)
 ```
@@ -131,9 +180,13 @@ scripts/apply-generated.sh                 validate + reload on the Nagios host
 
 ## 5. Security notes (read before exposing anything)
 
-- **CGIs require authentication.** `cgi.cfg` sets `use_authentication=1`; the
-  interface forwards Basic Auth on every JSON request. The default password
-  is `nagiosadmin` — change it via `NAGIOS_ADMIN_PASSWORD`.
+- **CGIs require authentication.** `cgi.cfg` sets `use_authentication=1` and
+  `apache-nagios.conf` guards `/cgi-bin/` and `/nagios/` with Basic Auth
+  against `htpasswd.users`; the interface forwards those credentials on every
+  JSON request. Both halves are needed: the CGIs authorise on `REMOTE_USER`,
+  which only Apache's `AuthType` sets. The local default password is
+  `nagiosadmin` — change it via `NAGIOS_ADMIN_PASSWORD`, which is mandatory on
+  Railway.
 - **The UI itself has no auth yet.** The nginx container serves the SPA to
   anyone who can reach port 8090. Put a real edge (auth proxy, SSO) in front
   of it for shared deployments; UI-level auth is a tracked follow-up.
@@ -145,9 +198,24 @@ scripts/apply-generated.sh                 validate + reload on the Nagios host
 
 ## 6. Tested here vs. pending
 
-Verified on this workstation (Windows, no Docker): TypeScript typecheck, unit
-tests, the full component-level end-to-end smoke suite, production build, dev
-server. **Not yet run**: the Docker build itself (no Docker on this machine)
-and a live Nagios round trip — both are the first things to do on a host with
-Docker, using the steps above. The plan file in `.project/project_plans/`
-tracks both.
+Verified on the Windows workstation: TypeScript typecheck, unit tests, the
+full component-level end-to-end smoke suite, production build, dev server.
+
+Verified on a Linux host with Docker (2026-10-07):
+
+- Both images build from a clean context.
+- `nagios` starts, validates its configuration with 0 warnings / 0 errors, and
+  runs its first check against the `monitoring-self` host.
+- `/healthz` 200 unauthenticated; `/cgi-bin/statusjson.cgi` 401 without
+  credentials and 200 with them; the classic UI at `/nagios/` renders.
+- `ui` renders its nginx template, serves the SPA, and proxies authenticated
+  CGI calls through to `nagios` over a container network — the same shape as
+  Railway private networking.
+- `PORT` injection works on both images; the Nagios entrypoint refuses to start
+  on a platform deployment with no `NAGIOS_ADMIN_PASSWORD`.
+
+**Still not exercised**: a real Railway deployment, and checks against real
+targets (only the self-check has run). Known follow-ups: the final image is
+~960MB because the build toolchain lives in an earlier layer that the trailing
+`apt-get purge` cannot reclaim — a multi-stage build would cut it sharply; and
+the SPA itself still has no authentication (section 5).
