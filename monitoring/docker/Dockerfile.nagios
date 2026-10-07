@@ -75,10 +75,14 @@ COPY monitoring/nagios/objects/templates.cfg /usr/local/nagios/etc/objects/templ
 COPY monitoring/nagios/objects/bootstrap.cfg /usr/local/nagios/etc/objects/bootstrap.cfg
 COPY monitoring/nagios/objects/timeperiods.cfg /usr/local/nagios/etc/objects/timeperiods.cfg
 COPY monitoring/nagios/objects/generated/targets.cfg /usr/local/nagios/etc/objects/generated/targets.cfg
-# nagios.cfg references these; keep them present so a fresh volume mounts cleanly.
-RUN touch /usr/local/nagios/etc/objects/generated/hosts.cfg \
-    /usr/local/nagios/etc/objects/generated/services.cfg \
-    && chown -R nagios:nagios /usr/local/nagios/etc/objects/generated
+# nagios.cfg references these, so they must exist. They are COPYied rather than
+# touched empty: on compose the host directory is bind-mounted over them, but a
+# managed platform has no mount, so baking them in is the only way targets ever
+# reach the deployment — export from the interface, commit into
+# monitoring/nagios/objects/generated/, redeploy.
+COPY monitoring/nagios/objects/generated/hosts.cfg /usr/local/nagios/etc/objects/generated/hosts.cfg
+COPY monitoring/nagios/objects/generated/services.cfg /usr/local/nagios/etc/objects/generated/services.cfg
+RUN chown -R nagios:nagios /usr/local/nagios/etc/objects/generated
 
 # Apache wiring + explicit CGI module. mod_cgid (not mod_cgi) because Debian's
 # default MPM is event-based, and mod_cgi only works under prefork.

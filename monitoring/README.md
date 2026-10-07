@@ -79,6 +79,12 @@ and the password from `NAGIOS_ADMIN_PASSWORD`. The entrypoint runs
 
 ### Apply monitored targets
 
+On Railway there is no host filesystem and no volume, so the only route in is
+the image: export from the interface, commit the two files into
+`monitoring/nagios/objects/generated/`, and let the push redeploy. The steps
+below are the Docker-host flow, where the directory is bind-mounted and targets
+can be applied live without a rebuild.
+
 1. In the UI: **Targets → Deploy configuration** → copy or download
    `hosts.cfg` and `services.cfg`.
 2. Save them into `monitoring/nagios/objects/generated/` (on the host).
