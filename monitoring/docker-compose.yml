@@ -1,0 +1,40 @@
+name: availability-monitoring
+
+# The monitoring interface stack.
+#
+#   nagios  — Nagios Core 4.5.14 built from this repository, Apache + JSON CGIs
+#   ui      — the monitoring interface SPA, served by nginx which proxies the
+#             CGIs same-origin (so the browser never talks to Nagios directly)
+#
+# Start:  docker compose -f monitoring/docker-compose.yml up --build
+#         UI at      http://localhost:8090
+#         Classic UI https://localhost:8080/nagios   (user: nagiosadmin)
+#
+# Set NAGIOS_ADMIN_PASSWORD to something real before any non-local deployment.
+
+services:
+  nagios:
+    build:
+      context: ..
+      dockerfile: monitoring/docker/Dockerfile.nagios
+    container_name: availability-nagios
+    environment:
+      # Consumed by entrypoint.sh on first start to create htpasswd.users.
+      NAGIOS_ADMIN_PASSWORD: ${NAGIOS_ADMIN_PASSWORD:-nagiosadmin}
+    volumes:
+      # Generated configs written by the monitoring interface, applied live.
+      - ./nagios/objects/generated:/usr/local/nagios/etc/objects/generated:ro
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ../monitoring-ui
+      dockerfile: Dockerfile
+    container_name: availability-ui
+    depends_on:
+      - nagios
+    ports:
+      - "8090:80"
+    restart: unless-stopped

@@ -1,0 +1,93 @@
+# syntax=docker/dockerfile:1
+#
+# Nagios Core container for the availability monitoring stack.
+#
+# Builds Nagios Core 4.5.14 from THIS repository's source tree (the exact
+# checkout the operator downloaded), using the standard autotools build, then
+# layers the checked-in configuration in monitoring/nagios/ on top. The
+# monitoring-plugins package supplies the check binaries.
+#
+# Trade-off: a single-stage image (no intermediate build stage) keeps this
+# Dockerfile simple and auditable at the cost of a heavier final image. The
+# build toolchain is removed below to claw most of that back.
+#
+# Usage:
+#   docker build -f monitoring/docker/Dockerfile.nagios -t availability-nagios .
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build toolchain + runtime pieces, monitoring plugins, and the ping binary
+# that check_ping shells out to.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential autoconf automake libtool \
+        apache2 apache2-utils \
+        libssl-dev libgd-dev libpng-dev libjpeg62-turbo-dev libxml2-dev \
+        wget ca-certificates \
+        monitoring-plugins iputils-ping \
+    && rm -rf /var/lib/apt/lists/*
+
+# Users and groups for the daemon and CGI access. www-data (apache) gets
+# membership so the CGIs can read status.dat and the command file.
+RUN useradd --system --create-home --home-dir /usr/local/nagios nagios \
+    && groupadd --system nagcmd \
+    && usermod -a -G nagios,nagcmd www-data \
+    && usermod -a -G nagcmd nagios
+
+WORKDIR /usr/src/nagios
+COPY . .
+
+# Configure against the downloaded source. Flags mirror a standard install.
+RUN ./configure \
+        --prefix=/usr/local/nagios \
+        --with-nagios-user=nagios \
+        --with-nagios-group=nagios \
+        --with-command-user=nagios \
+        --with-command-group=nagcmd \
+    && make -j"$(nproc)" all \
+    && make install \
+    && make install-commandmode \
+    && chown -R nagios:nagios /usr/local/nagios/var \
+    && chmod 755 /usr/local/nagios/sbin
+
+# Replace the installed sample configuration with the checked-in configuration.
+RUN rm -rf /usr/local/nagios/etc/objects \
+    && mkdir -p /usr/local/nagios/etc/objects/generated
+COPY monitoring/nagios/nagios.cfg /usr/local/nagios/etc/nagios.cfg
+COPY monitoring/nagios/resource.cfg /usr/local/nagios/etc/resource.cfg
+COPY monitoring/nagios/cgi.cfg /usr/local/nagios/etc/cgi.cfg
+COPY monitoring/nagios/objects/commands.cfg /usr/local/nagios/etc/objects/commands.cfg
+COPY monitoring/nagios/objects/contacts.cfg /usr/local/nagios/etc/objects/contacts.cfg
+COPY monitoring/nagios/objects/templates.cfg /usr/local/nagios/etc/objects/templates.cfg
+COPY monitoring/nagios/objects/timeperiods.cfg /usr/local/nagios/etc/objects/timeperiods.cfg
+COPY monitoring/nagios/objects/generated/targets.cfg /usr/local/nagios/etc/objects/generated/targets.cfg
+# nagios.cfg references these; keep them present so a fresh volume mounts cleanly.
+RUN touch /usr/local/nagios/etc/objects/generated/hosts.cfg \
+    /usr/local/nagios/etc/objects/generated/services.cfg \
+    && chown -R nagios:nagios /usr/local/nagios/etc/objects/generated
+
+# Apache wiring + explicit CGI module. mod_cgid (not mod_cgi) because Debian's
+# default MPM is event-based, and mod_cgi only works under prefork.
+COPY monitoring/docker/apache-nagios.conf /etc/apache2/conf-available/nagios.conf
+RUN a2enmod cgid \
+    && a2enconf nagios
+
+COPY monitoring/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Validate-and-reload helper for the generated objects directory.
+COPY monitoring/scripts/apply-generated.sh /usr/local/nagios/bin/apply-generated.sh
+RUN chmod +x /usr/local/nagios/bin/apply-generated.sh
+
+# Drop the build toolchain from the final image.
+RUN apt-get purge -y --auto-remove \
+        build-essential autoconf automake libtool \
+        libssl-dev libgd-dev libpng-dev libjpeg62-turbo-dev libxml2-dev \
+        wget \
+    && apt-get autoremove -y \
+    && rm -rf /usr/src/nagios /var/lib/apt/lists/*
+
+EXPOSE 80
+
+ENTRYPOINT ["/entrypoint.sh"]

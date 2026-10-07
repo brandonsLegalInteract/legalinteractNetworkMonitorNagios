@@ -1,0 +1,16 @@
+# Build context exclusion for the Nagios container build (context = repo root).
+# Keeps the image build from shipping AI tooling, docs and test trees.
+.agents
+.github
+.project
+docs
+contrib
+debian
+t
+test
+t-tap
+tap
+monitoring-ui
+*.log
+.tmp
+.git
