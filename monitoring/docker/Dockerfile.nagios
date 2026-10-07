@@ -83,8 +83,13 @@ RUN touch /usr/local/nagios/etc/objects/generated/hosts.cfg \
 # Apache wiring + explicit CGI module. mod_cgid (not mod_cgi) because Debian's
 # default MPM is event-based, and mod_cgi only works under prefork.
 COPY monitoring/docker/apache-nagios.conf /etc/apache2/conf-available/nagios.conf
+# serve-cgi-bin.conf is Debian's stock /cgi-bin/ -> /usr/lib/cgi-bin mapping.
+# Ours already wins (conf-enabled is read alphabetically, nagios < serve-cgi-bin)
+# but relying on filename order for which ScriptAlias takes effect is a trap, and
+# Apache logs AH00671 about the overlap on every start. Turn it off explicitly.
 RUN a2enmod cgid \
-    && a2enconf nagios
+    && a2enconf nagios \
+    && a2disconf serve-cgi-bin
 
 # Unauthenticated liveness target, served from outside the Nagios document root
 # so it is not behind the Basic Auth that guards the CGIs and classic UI.

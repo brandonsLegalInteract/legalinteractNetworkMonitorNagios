@@ -97,43 +97,53 @@ targets are excluded from exports and shown as comments.
 ## 2b. Deploy on Railway
 
 Railway's default builder (Railpack) cannot build this repository — it sees an
-autotools C source tree with no `start.sh` and gives up. The service must be
-switched to the **Dockerfile** builder. `railway.json` at the repository root
-already declares that, so a service pointed at the repo root picks it up:
+autotools C source tree with no `start.sh` and gives up. Each service must be
+switched to the **Dockerfile** builder.
 
-```json
-{ "build": { "builder": "DOCKERFILE",
-             "dockerfilePath": "monitoring/docker/Dockerfile.nagios" } }
-```
+This is configured **in the Railway dashboard, not in a config file.** Railway
+deprecated Config-as-Code: services that have never used it cannot opt in, so a
+committed `railway.json` is silently ignored. Settings below are the source of
+truth; keep this table in step with the dashboard by hand.
 
 Two services, mirroring the compose stack:
 
-| Service  | Root directory | Builder    | Public domain |
-| -------- | -------------- | ---------- | ------------- |
-| `nagios` | `/` (repo root)| Dockerfile | none — private only |
-| `ui`     | `/monitoring-ui` | Dockerfile | yes — this is the operator surface |
+### nagios service — the check engine
 
-### nagios service
+| Setting | Value |
+| ------- | ----- |
+| Source → Root Directory | *(empty — the Dockerfile copies the whole source tree)* |
+| Build → Builder | `Dockerfile` |
+| Build → Dockerfile Path | `/monitoring/docker/Dockerfile.nagios` |
+| Deploy → Healthcheck Path | `/healthz` |
+| Variable `NAGIOS_ADMIN_PASSWORD` | **required** — the entrypoint refuses to start without it |
+| Variable `PORT` | `8080` — pin it so the ui service has a fixed address to target |
 
-- Root directory `/`; the root `railway.json` selects the Dockerfile.
-- Variables: `NAGIOS_ADMIN_PASSWORD` — **required**. The entrypoint refuses to
-  start on Railway without it rather than exposing the default password to the
-  internet.
-- Do not generate a public domain. Enable the private network address only;
-  the UI reaches it at `nagios.railway.internal`.
-- Health check `/healthz` (unauthenticated; everything else needs Basic Auth).
-- Add a volume mounted at `/usr/local/nagios/var` so status, retention and
-  logs survive a redeploy. Without it every deploy restarts from zero history.
+A clean start logs `Total Errors: 0`, `Starting Apache on port 8080...`, then
+`Nagios 4.5.14 starting... (PID=1)`.
 
-### ui service
+Optional, and skipped on a proof of concept: a volume at
+`/usr/local/nagios/var`. Without one, every redeploy discards status, retention
+and logs. Add it before the deployment is worth keeping history for.
 
-- Root directory `/monitoring-ui`; `monitoring-ui/railway.json` selects its
-  Dockerfile.
-- Variables: `NAGIOS_UPSTREAM=http://nagios.railway.internal:8080` (match the
-  port Railway assigned the nagios service — read it from that service's
-  `PORT`). `PORT` is injected by Railway and consumed by the nginx template.
-- Generate a public domain. Operators sign in with `nagiosadmin` and
-  `NAGIOS_ADMIN_PASSWORD` when the browser is challenged on the first CGI call.
+Give this service a public domain only if you want the classic UI and the JSON
+API reachable directly. They are behind Basic Auth either way, but the intended
+shape is that only the ui service is public.
+
+### ui service — the operator surface
+
+| Setting | Value |
+| ------- | ----- |
+| Source → Root Directory | `/monitoring-ui` |
+| Build → Builder | `Dockerfile` |
+| Build → Dockerfile Path | *(empty — `Dockerfile` at the root directory)* |
+| Variable `NAGIOS_UPSTREAM` | `http://${{nagios.RAILWAY_PRIVATE_DOMAIN}}:8080` |
+| Networking | generate a public domain |
+
+`PORT` is injected by Railway and consumed by the nginx template; do not set it.
+Replace `nagios` in the variable reference with that service's actual name.
+
+Operators open the ui domain, and the browser is challenged for Basic Auth on
+the first CGI call: `nagiosadmin` and `NAGIOS_ADMIN_PASSWORD`.
 
 ### What is still not protected
 
@@ -171,7 +181,6 @@ docker/Dockerfile.nagios                   builds Core 4.5.14 from this repo
 docker/entrypoint.sh                       validate → apache → nagios (PID 1)
 docker/apache-nagios.conf                  /cgi-bin/ and /nagios/ aliases
 docker-compose.yml                         nagios + ui stack
-../railway.json                            Railway: use the Dockerfile builder
 scripts/apply-generated.sh                 validate + reload on the Nagios host
 ../monitoring-ui/                          the interface (see its README)
 ```
