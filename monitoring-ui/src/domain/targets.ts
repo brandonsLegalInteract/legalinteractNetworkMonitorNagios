@@ -6,6 +6,7 @@ import {
 } from '@/domain/checks';
 import { slugify } from '@/domain/naming';
 import type { CheckKind, DnsRecordType, Target, TargetKind } from '@/domain/types';
+import seedFile from '@/data/seedTargets.json';
 
 export const TARGET_KIND_LABEL: Record<TargetKind, string> = {
   device: 'Device',
@@ -239,10 +240,58 @@ export function hasErrors(errors: ValidationErrors): boolean {
 }
 
 /**
- * Starter targets so a fresh install demonstrates a realistic spread of checks
- * instead of an empty table. Replaced as soon as the operator saves their own.
+ * The targets a fresh browser starts with, read from `data/seedTargets.json`.
+ *
+ * The registry itself lives in this browser's localStorage, so it does not
+ * survive a cleared cache and does not follow the operator to another machine.
+ * The seed file is the deployment's answer to that: edit it, commit, redeploy,
+ * and any browser with an empty registry picks the set up. Entries that do not
+ * parse are dropped rather than taking the whole app down with them.
  */
 export function seedTargets(): Target[] {
+  const entries = Array.isArray(seedFile.targets) ? seedFile.targets : [];
+  const valid: Target[] = [];
+
+  for (const entry of entries) {
+    if (isSeedTarget(entry)) {
+      valid.push(entry);
+    } else {
+      console.warn('seedTargets.json: skipping malformed entry', entry);
+    }
+  }
+
+  return valid;
+}
+
+const TARGET_KINDS: readonly string[] = ['device', 'application', 'service'];
+const CHECK_KINDS: readonly string[] = ['ping', 'tcp', 'http', 'dns'];
+
+function isSeedTarget(value: unknown): value is Target {
+  if (value === null || typeof value !== 'object') return false;
+  const c = value as Partial<Target>;
+
+  return (
+    typeof c.id === 'string' &&
+    typeof c.name === 'string' &&
+    typeof c.address === 'string' &&
+    typeof c.kind === 'string' &&
+    TARGET_KINDS.includes(c.kind) &&
+    typeof c.check === 'string' &&
+    CHECK_KINDS.includes(c.check) &&
+    typeof c.checkIntervalMinutes === 'number' &&
+    typeof c.retryIntervalMinutes === 'number' &&
+    typeof c.maxAttempts === 'number' &&
+    typeof c.enabled === 'boolean'
+  );
+}
+
+/**
+ * The original demo spread: one of every kind and check, including a disabled
+ * target. Not what a deployment seeds any more -- it is the fixture the
+ * simulated source and the component tests exercise, kept here so those stay
+ * independent of whatever a given deployment happens to monitor.
+ */
+export function demoTargets(): Target[] {
   return [
     {
       id: 'seed-core-switch',

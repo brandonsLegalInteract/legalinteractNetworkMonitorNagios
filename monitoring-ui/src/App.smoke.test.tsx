@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { App } from '@/App';
+import { demoTargets } from '@/domain/targets';
 
 /**
  * End-to-end smoke test over the real component tree, in jsdom, with the
@@ -26,6 +27,10 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   localStorage.setItem('monitoring.settings', JSON.stringify(OUTAGE_SETTINGS));
+  // Seed the registry explicitly with the demo fixture. The app's own seed now
+  // comes from data/seedTargets.json, which is deployment-specific — these
+  // assertions must not move every time an operator edits their target list.
+  localStorage.setItem('monitoring.targets', JSON.stringify(demoTargets()));
 });
 
 describe('Availability Monitor app', () => {
