@@ -141,6 +141,18 @@ function str(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
 }
 
+/**
+ * The JSON CGIs report every timestamp in milliseconds (`query_time` and
+ * friends are all `...000`), but the app's formatters take epoch seconds.
+ * Convert here, at the wire boundary, so no component has to know which unit
+ * Nagios happened to use. A missing or zero timestamp stays zero, which the
+ * formatters render as "never".
+ */
+function epochSeconds(value: unknown): number {
+  const ms = num(value);
+  return ms > 0 ? Math.floor(ms / 1000) : 0;
+}
+
 function bool(value: unknown, fallback = false): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;
@@ -161,9 +173,9 @@ function parseHosts(data: unknown): Record<string, HostStatus> {
       name,
       state: hostStateFromNagios(details.status),
       pluginOutput: str(details.plugin_output),
-      lastCheck: num(details.last_check),
-      nextCheck: num(details.next_check),
-      lastStateChange: num(details.last_state_change),
+      lastCheck: epochSeconds(details.last_check),
+      nextCheck: epochSeconds(details.next_check),
+      lastStateChange: epochSeconds(details.last_state_change),
       currentAttempt: num(details.current_attempt, 1),
       maxAttempts: num(details.max_attempts, 1),
       executionTime: num(details.execution_time),
@@ -199,9 +211,9 @@ function parseServices(data: unknown): Record<string, ServiceStatus> {
         description,
         state: serviceStateFromNagios(details.status),
         pluginOutput: str(details.plugin_output),
-        lastCheck: num(details.last_check),
-        nextCheck: num(details.next_check),
-        lastStateChange: num(details.last_state_change),
+        lastCheck: epochSeconds(details.last_check),
+        nextCheck: epochSeconds(details.next_check),
+        lastStateChange: epochSeconds(details.last_state_change),
         currentAttempt: num(details.current_attempt, 1),
         maxAttempts: num(details.max_attempts, 1),
         executionTime: num(details.execution_time),
